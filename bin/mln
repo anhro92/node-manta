@@ -1,0 +1,109 @@
+#!/usr/bin/env node
+// -*- mode: js -*-
+/*
+ * Copyright 2018 Joyent, Inc.
+ */
+
+var fs = require('fs');
+var path = require('path-platform');
+var url = require('url');
+
+var bunyan = require('bunyan');
+var dashdash = require('dashdash');
+
+var manta = require('../lib');
+
+
+///--- Functions
+
+function optionsParser(name) {
+    var parser = dashdash.createParser({
+        options: manta.DEFAULT_CLI_OPTIONS.concat([
+            {
+                group: name + ' options'
+            },
+            {
+                names: ['role-tag'],
+                type: 'arrayOfString',
+                help: 'role tags to apply to the destination object',
+                helpArg: 'TAG,TAG...'
+            }
+        ])
+    });
+
+    return (parser);
+}
+
+
+function ifError(err) {
+    if (err) {
+        console.error('mln: ' + err.toString());
+        process.exit(1);
+    }
+}
+
+
+/**
+ * Handle command-specific options parsing and checking.
+ *
+ * @param {Object} opts: Required. A parsed options object.
+ * @param {Object} parser: Required. A dashdash option parser.
+ * @returns {Object} A possibly mutated version of the `opts` input parameter.
+ */
+function parseCmdOptions(opts, parser) {
+    if (opts._args.length < 1) {
+        manta.cli_usage(parser, 'source required', 'source dest');
+    } else if (opts._args.length < 2) {
+        manta.cli_usage(parser, 'dest required', 'source dest');
+    }
+
+    opts.source = path.posix.normalize(opts._args[0]);
+    opts.path = path.posix.normalize(opts._args[1]);
+
+    ifError(manta.assertPath(opts.path, true));
+
+    if (opts.role_tag && opts.role_tag.length === 1) {
+        /* JSSTYLED */
+        opts.role_tag = opts.role_tag[0].split(/\s*,\s*/);
+    }
+
+    return (opts);
+}
+
+
+///--- Mainline
+
+(function main() {
+    var argTypes = ['mpath', 'mpath', 'none'];
+    var name = path.basename(process.argv[1]);
+    var log = bunyan.createLogger({
+        name: name,
+        level: (process.env.LOG_LEVEL || 'info'),
+        stream: process.stderr
+    });
+    var parser = optionsParser(name);
+    var parseArgs = {
+        name: name,
+        parser: parser,
+        argTypes: argTypes,
+        parseCmdOptions: parseCmdOptions,
+        log: log,
+        extra: 'source dest'
+    };
+    var options = manta.parseOptions(parseArgs);
+
+    var client = manta.createBinClient(options);
+    var headers = {
+        headers: options.headers || {}
+    };
+
+    if (options.role_tag) {
+        headers.headers['role-tag'] = options.role_tag.join(',');
+    }
+
+    client.ln(options.source, options.path, headers, function (err) {
+        ifError(err);
+
+        client.close();
+    });
+})();
